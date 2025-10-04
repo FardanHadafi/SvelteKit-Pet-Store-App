@@ -1,63 +1,29 @@
 import { fail, redirect } from '@sveltejs/kit';
 import type { Actions } from './$types';
 
-// Form data interface matching Go struct
-interface UserRegisterRequest {
-	username: string;
-	email: string;
-	password: string;
-	role: string;
-}
-
-// Validation function
-function validateForm(formData: UserRegisterRequest): Record<string, string> {
-	const errors: Record<string, string> = {};
-
-	// Username validation
-	if (!formData.username.trim()) {
-		errors.username = 'Username is required';
-	} else if (formData.username.length < 3) {
-		errors.username = 'Username must be at least 3 characters';
-	} else if (formData.username.length > 50) {
-		errors.username = 'Username must be less than 50 characters';
-	}
-
-	// Email validation
-	if (!formData.email.trim()) {
-		errors.email = 'Email is required';
-	} else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-		errors.email = 'Please enter a valid email address';
-	}
-
-	// Password validation
-	if (!formData.password) {
-		errors.password = 'Password is required';
-	} else if (formData.password.length < 6) {
-		errors.password = 'Password must be at least 6 characters';
-	}
-
-	return errors;
+// Match Go AuthResponse structure
+interface AuthResponse {
+	token: string;
+	user: {
+		id: number;
+		username: string;
+		email: string;
+		role: string;
+		created_at: string;
+		updated_at: string;
+	};
 }
 
 export const actions: Actions = {
-	default: async ({ request }) => {
+	default: async ({ request, cookies }) => {
 		const formData = await request.formData();
 
-		const userData: UserRegisterRequest = {
+		const userData = {
 			username: formData.get('username') as string,
 			email: formData.get('email') as string,
 			password: formData.get('password') as string,
 			role: (formData.get('role') as string) || 'user'
 		};
-
-		// Validate form
-		const errors = validateForm(userData);
-		if (Object.keys(errors).length > 0) {
-			return fail(400, {
-				errors,
-				formData: userData
-			});
-		}
 
 		try {
 			const response = await fetch('http://localhost:3000/api/users/register', {
@@ -68,22 +34,38 @@ export const actions: Actions = {
 				body: JSON.stringify(userData)
 			});
 
-			const data = await response.json();
+			const data: AuthResponse = await response.json();
 
-			if (response.ok) {
-				// Registration successful
-				throw redirect(303, '/login');
-			} else {
-				// Handle server-side validation errors or other errors
+			if (!response.ok) {
 				return fail(400, {
-					apiError: data.message || data.error || 'Registration failed',
+					apiError: 'Registration failed',
 					formData: userData
 				});
 			}
+
+			// ✅ Save token from response
+			cookies.set('auth_token', data.token, {
+				path: '/',
+				httpOnly: true,
+				secure: process.env.NODE_ENV === 'production',
+				sameSite: 'strict',
+				maxAge: 60 * 60 * 24 // 24 hours
+			});
+
+			// ✅ Save user info
+			cookies.set('user', JSON.stringify(data.user), {
+				path: '/',
+				maxAge: 60 * 60 * 24
+			});
+
+			console.log('✅ Registration successful, token saved');
+			throw redirect(303, '/login');
 		} catch (error) {
-			if (error instanceof redirect) {
+			// Don't catch redirects
+			if (error instanceof Response || (error as any)?.status) {
 				throw error;
 			}
+
 			console.error('Registration error:', error);
 			return fail(500, {
 				apiError: 'Network error. Please try again.',

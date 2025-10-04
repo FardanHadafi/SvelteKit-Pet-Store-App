@@ -45,14 +45,7 @@
 		const token = localStorage.getItem('auth_token');
 
 		try {
-			const response = await fetch('http://localhost:3000/api/users', {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(formData)
-			});
-
+			const response = await fetch('http://localhost:3000/api/users');
 			const data = await response.json();
 
 			if (response.ok) {

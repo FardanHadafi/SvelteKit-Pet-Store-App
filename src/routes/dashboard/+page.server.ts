@@ -1,187 +1,117 @@
-import { fail, redirect, type Actions } from '@sveltejs/kit';
-import type { PageServerLoad } from './$types';
+import { fail, redirect } from '@sveltejs/kit';
+import type { PageServerLoad, Actions } from './$types';
+import type { User, Pet } from '$lib/types';
 
-interface User {
-	id: number;
-	username: string;
-	email: string;
-	role: 'user' | 'admin';
-	created_at?: string;
-}
-
-interface Pet {
-	id?: number;
-	name: string;
-	species: string;
-	breed: string;
-	age: number;
-	owner_id: number;
-	owner_username?: string;
-}
-
-const API_BASE = 'https://localhost:3000/api';
-
-async function apiCall(
-	fetch: typeof window.fetch,
-	path: string,
-	token: string | undefined,
-	options: RequestInit = {}
-) {
-	if (!token) throw redirect(303, '/login');
-
-	const response = await fetch(`${API_BASE}${path}`, {
-		...options,
-		headers: {
-			...options.headers,
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${token}`
-		}
-	});
-
-	if (response.status === 401) {
-		// Handle token refresh or redirect to login
-		throw redirect(303, '/login');
-	}
-
-	return response;
-}
-
-// --- LOAD FUNCTION ---
-// This runs on the server before the page is rendered.
-// It fetches all the necessary data for the component.
-export const load: PageServerLoad = async ({ cookies, fetch }) => {
+export const load: PageServerLoad = async ({ cookies }) => {
 	const token = cookies.get('auth_token');
 	const userStr = cookies.get('user');
 
+	// If not logged in, redirect to login
 	if (!token || !userStr) {
 		throw redirect(303, '/login');
 	}
 
-	const currentUser: User = JSON.parse(userStr);
+	const user: User = JSON.parse(userStr);
 
+	// Fetch pets from your API
 	try {
-		// Parallel fetch for pets and (if admin) users
-		const petsPromise = apiCall(fetch, '/pets', token).then((res) => res.json() as Promise<Pet[]>);
+		const response = await fetch('http://localhost:3000/api/pets', {
+			headers: {
+				Authorization: `Bearer ${token}`
+			}
+		});
 
-		let usersPromise: Promise<User[]> = Promise.resolve([]);
-		if (currentUser.role === 'admin') {
-			usersPromise = apiCall(fetch, '/users', token).then((res) => res.json() as Promise<User[]>);
+		if (response.ok) {
+			const pets: Pet[] = await response.json();
+			return { user, pets };
 		}
-
-		const [pets, users] = await Promise.all([petsPromise, usersPromise]);
-
-		return {
-			currentUser,
-			pets,
-			users,
-			error: null
-		};
 	} catch (error) {
-		console.error('Failed to load dashboard data:', error);
-		return {
-			currentUser,
-			pets: [],
-			users: [],
-			error: 'Could not load dashboard data. Please try again later.'
-		};
+		console.error('Failed to fetch pets:', error);
 	}
+
+	// Return empty pets if fetch fails
+	return {
+		user,
+		pets: [] as Pet[]
+	};
 };
 
-// --- ACTIONS ---
-// These handle form submissions from the component.
 export const actions: Actions = {
-	/**
-	 * Add a new pet
-	 */
-	addPet: async ({ request, cookies, fetch }) => {
+	// Add pet
+	addPet: async ({ request, cookies }) => {
 		const token = cookies.get('auth_token');
-		const data = await request.formData();
+		const formData = await request.formData();
+
+		const petData = {
+			name: formData.get('name') as string,
+			species: formData.get('species') as string,
+			breed: formData.get('breed') as string,
+			age: Number(formData.get('age'))
+		};
 
 		try {
-			const response = await apiCall(fetch, '/pets', token, {
+			const response = await fetch('http://localhost:3000/api/pets', {
 				method: 'POST',
-				body: JSON.stringify({
-					name: data.get('name'),
-					species: data.get('species'),
-					breed: data.get('breed'),
-					age: Number(data.get('age'))
-				})
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`
+				},
+				body: JSON.stringify(petData)
 			});
 
-			if (!response.ok) {
-				const errorData = await response.json();
-				return fail(response.status, { error: errorData.message || 'Failed to add pet' });
+			if (response.ok) {
+				return {
+					success: true as const,
+					message: 'Pet added successfully!'
+				};
+			} else {
+				const error = await response.json();
+				return fail(400, {
+					error: error.message || 'Failed to add pet'
+				});
 			}
-			return { success: true, message: 'Pet added successfully!' };
-		} catch (e) {
-			return fail(500, { error: 'An unexpected error occurred.' });
+		} catch (error) {
+			return fail(500, {
+				error: 'Network error. Please try again.'
+			});
 		}
 	},
 
-	/**
-	 * Update an existing pet
-	 */
-	updatePet: async ({ request, cookies, fetch }) => {
+	// Delete pet
+	deletePet: async ({ request, cookies }) => {
 		const token = cookies.get('auth_token');
-		const data = await request.formData();
-		const petId = data.get('id');
-
-		if (!petId) {
-			return fail(400, { error: 'Pet ID is missing.' });
-		}
+		const formData = await request.formData();
+		const petId = formData.get('id');
 
 		try {
-			const response = await apiCall(fetch, `/pets/${petId}`, token, {
-				method: 'PUT',
-				body: JSON.stringify({
-					name: data.get('name'),
-					species: data.get('species'),
-					breed: data.get('breed'),
-					age: Number(data.get('age'))
-				})
+			const response = await fetch(`http://localhost:3000/api/pets/${petId}`, {
+				method: 'DELETE',
+				headers: {
+					Authorization: `Bearer ${token}`
+				}
 			});
 
-			if (!response.ok) {
-				const errorData = await response.json();
-				return fail(response.status, { error: errorData.message || 'Failed to update pet' });
+			if (response.ok) {
+				return {
+					success: true as const,
+					message: 'Pet deleted successfully!'
+				};
+			} else {
+				return fail(400, {
+					error: 'Failed to delete pet'
+				});
 			}
-			return { success: true, message: 'Pet updated successfully!' };
-		} catch (e) {
-			return fail(500, { error: 'An unexpected error occurred.' });
+		} catch (error) {
+			return fail(500, {
+				error: 'Network error. Please try again.'
+			});
 		}
 	},
 
-	/**
-	 * Delete a pet
-	 */
-	deletePet: async ({ request, cookies, fetch }) => {
-		const token = cookies.get('auth_token');
-		const data = await request.formData();
-		const petId = data.get('id');
-
-		try {
-			const response = await apiCall(fetch, `/pets/${petId}`, token, {
-				method: 'DELETE'
-			});
-
-			if (!response.ok) {
-				return fail(response.status, { error: 'Failed to delete pet.' });
-			}
-			return { success: true, deletedPetId: petId };
-		} catch (e) {
-			return fail(500, { error: 'An unexpected error occurred.' });
-		}
-	},
-
-	/**
-	 * Logout the user
-	 */
+	// Logout
 	logout: async ({ cookies }) => {
-		// Clear the cookies
 		cookies.delete('auth_token', { path: '/' });
 		cookies.delete('user', { path: '/' });
-
-		// Redirect to login page
 		throw redirect(303, '/login');
 	}
 };

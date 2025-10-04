@@ -1,94 +1,72 @@
 import { fail, redirect } from '@sveltejs/kit';
-import type { Actions, PageServerLoad } from './$types';
+import type { Actions } from './$types';
 
-// If a user who is already logged in tries to visit the login page,
-// redirect them straight to the dashboard.
-export const load: PageServerLoad = async ({ cookies }) => {
-	const token = cookies.get('auth_token');
-	if (token) {
-		// Redirect to dashboard if already logged in
-		throw redirect(302, '/dashboard');
-	}
-	return {};
-};
+interface AuthResponse {
+	token: string;
+	user: {
+		id: number;
+		username: string;
+		email: string;
+		role: string;
+		created_at: string;
+		updated_at: string;
+	};
+}
 
 export const actions: Actions = {
-	// Assumes your login form action is named "login"
-	// e.g., <form method="POST" action="?/login">
-	login: async ({ request, cookies, fetch }) => {
-		const data = await request.formData();
-		const username = data.get('username'); // Changed from email to username
-		const password = data.get('password');
+	default: async ({ request, cookies }) => {
+		const formData = await request.formData();
 
-		if (!username || !password) {
-			return fail(400, { error: 'Username and password are required.' });
-		}
+		const loginData = {
+			email: formData.get('email') as string,
+			password: formData.get('password') as string
+		};
 
 		try {
-			// This should be the URL of your backend API
-			const API_BASE = 'http://localhost:3000/api';
-
-			// 1. Call your backend login endpoint
-			const response = await fetch(`${API_BASE}/users/login`, {
+			const response = await fetch('http://localhost:3000/api/users/login', {
 				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json'
 				},
-				body: JSON.stringify({
-					username: username.toString(),
-					password: password.toString()
-				})
+				body: JSON.stringify(loginData)
 			});
+
+			const data = await response.json();
 
 			if (!response.ok) {
-				// Handle non-OK responses
-				let errorMessage = 'Invalid credentials';
-				try {
-					const errorData = await response.json();
-					errorMessage = errorData.message || errorData.error || errorMessage;
-				} catch {
-					// If response is not JSON, use status text
-					errorMessage = response.statusText || 'Login failed';
-				}
 				return fail(response.status, {
-					error: errorMessage,
-					username: username.toString()
+					apiError: data.error || data.message || 'Login failed',
+					formData: loginData
 				});
 			}
 
-			const result = await response.json();
+			// ✅ Type assertion for successful response
+			const authData = data as AuthResponse;
 
-			// 2. Set the auth token and user info in cookies
-			if (result.token) {
-				cookies.set('auth_token', result.token, {
-					path: '/',
-					httpOnly: true,
-					secure: process.env.NODE_ENV === 'production',
-					sameSite: 'strict',
-					maxAge: 60 * 60 * 24 * 7 // 1 week
-				});
-			}
+			// Save token
+			cookies.set('auth_token', authData.token, {
+				path: '/',
+				httpOnly: true,
+				secure: process.env.NODE_ENV === 'production',
+				sameSite: 'strict',
+				maxAge: 60 * 60 * 24
+			});
 
-			if (result.user) {
-				cookies.set('user_data', JSON.stringify(result.user), {
-					path: '/',
-					httpOnly: true,
-					secure: process.env.NODE_ENV === 'production',
-					sameSite: 'strict',
-					maxAge: 60 * 60 * 24 * 7 // 1 week
-				});
-			}
-
-			// 3. Redirect to the dashboard
-			throw redirect(303, '/dashboard');
-		} catch (err) {
-			console.error('Login action failed:', err);
-			if (err instanceof redirect) {
-				throw err;
-			}
+			// Save user
+			cookies.set('user', JSON.stringify(authData.user), {
+				path: '/',
+				maxAge: 60 * 60 * 24
+			});
+		} catch (error) {
+			// ❌ DON'T CATCH HERE - let it bubble up
+			console.error('Login error:', error);
 			return fail(500, {
-				error: 'An internal server error occurred. Please try again later.'
+				apiError: 'Network error. Please try again.',
+				formData: loginData
 			});
 		}
+
+		// ✅ Redirect OUTSIDE try-catch
+		throw redirect(303, '/dashboard');
 	}
 };

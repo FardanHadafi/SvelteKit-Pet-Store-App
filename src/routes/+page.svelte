@@ -1,3 +1,14 @@
+<script lang="ts">
+	import { goto } from '$app/navigation';
+	function gotoRegister() {
+		goto('/register');
+	}
+
+	function gotoLogin() {
+		goto('/login');
+	}
+</script>
+
 <nav>
 	<div class="nav-container">
 		<a href="#brand" class="brand">SmartPet</a>
@@ -7,8 +18,8 @@
 			<li><a href="#contact">Contact</a></li>
 		</ul>
 		<div class="nav-btn-container">
-			<button class="btn-signup">Sign Up</button>
-			<button class="btn-login">Login</button>
+			<button class="btn-signup" onclick={gotoRegister}>Sign Up</button>
+			<button class="btn-login" onclick={gotoLogin}>Login</button>
 		</div>
 	</div>
 </nav>
